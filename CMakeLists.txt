@@ -1,3 +1,4 @@
+cmake_minimum_required(VERSION 2.6)
 project(bin-callgraph)
 
 SET(CAPSTONE_INCLUDE "" CACHE STRING "Optional capstone include path")
