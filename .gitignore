@@ -36,3 +36,6 @@
 .*.sw[a-z]
 *~
 /tags
+
+# CMake
+build/
