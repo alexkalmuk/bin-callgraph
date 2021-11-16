@@ -316,8 +316,9 @@ static int prepare_elf(const char *fname)
 	int ret = 0;
 	std::streamsize size;
 	std::string in_name(fname);
+	std::string filename = in_name.substr(in_name.find_last_of("/") + 1);
 	std::ifstream in(fname, std::ios::binary);
-	std::ofstream out(in_name + std::string(".tinyperf_elf"),
+	std::ofstream out(filename + std::string(".out"),
 		std::ios::binary);
 
 	if (!in.is_open() || !out.is_open()) {
