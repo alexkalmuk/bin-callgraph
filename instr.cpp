@@ -14,14 +14,17 @@
 #include <capstone/platform.h>
 #include <capstone/capstone.h>
 
-/* TODO Remove hardcoded address and instructions */
-#define TEXT_START  0x1000
-#define TEXT_END    0x2000
+static uint64_t text_end;
+static bool use_file = false;
 
-static uint64_t glob_instr_addr = 0x115c;
-static unsigned char glob_instr[5] = { 0xb9, 0x78, 0x56, 0x34, 0x12 };
+static std::string glob_func_name;
+static uint64_t glob_instr_addr;
+static std::vector<unsigned char> glob_instr;
 
 static Elf64_Shdr *elf_get_section(unsigned char *v, const char *sh_name);
+static Elf64_Phdr *elf_get_region(unsigned char *v, uint64_t addr);
+static int elf_get_func_addr(unsigned char *v, const char *sym_name,
+                            uint64_t *sym_addr);
 
 /* TODO It's a workaround to find op.imm or op.mem.disp.
  * AFAIK, capstone cannot assemble the modified instruction. */
@@ -120,16 +123,16 @@ static void modify_ins(csh *disas_handle, cs_insn *ins)
 
 		dst_addr = ins->address + ins->size + shift;
 
-		if (dst_addr < TEXT_END) {
+		if (dst_addr < text_end) {
 			if ((ins->address < glob_instr_addr) &&
 					(dst_addr > glob_instr_addr)) {
-				shift += sizeof (glob_instr);
+				shift += glob_instr.size();
 			} else if ((ins->address > glob_instr_addr) &&
 			           (dst_addr < glob_instr_addr)) {
-				shift -= sizeof (glob_instr);
+				shift -= glob_instr.size();
 			}
 		} else if (ins->address + ins->size > glob_instr_addr) {
-			shift -= sizeof (glob_instr);
+			shift -= glob_instr.size();
 		}
 
 		/* modify instuction */
@@ -146,10 +149,16 @@ static int insert_profiler_code(std::vector<char> &v, std::vector<char> &outv)
 	cs_x86 *x86;
 	size_t insn_count;
 	Elf64_Shdr *code_shdr;
+	Elf64_Phdr *code_region;
 	char *vd = v.data();
 	int i, j, k;
 	uint64_t addr = 0;
 	const char *sections[2] = { ".text", ".fini" };
+
+	code_shdr = elf_get_section((unsigned char *)v.data(), ".text");
+	code_region = elf_get_region((unsigned char *)v.data(), code_shdr->sh_addr);
+
+	text_end = code_region->p_offset + code_region->p_filesz;
 
 	for (k = 0; k < 2; k++) {
 		code_shdr = elf_get_section((unsigned char *)v.data(), sections[k]);
@@ -191,7 +200,7 @@ static int insert_profiler_code(std::vector<char> &v, std::vector<char> &outv)
 		for (i = 0; i < insn_count; i++) {
 			/* push new instr */
 			if (addr == glob_instr_addr) {
-				for (j = 0; j < sizeof (glob_instr); j++) {
+				for (j = 0; j < glob_instr.size(); j++) {
 					outv.push_back(glob_instr[j]);
 				}
 			}
@@ -210,7 +219,7 @@ static int insert_profiler_code(std::vector<char> &v, std::vector<char> &outv)
 		cs_close(&disas_handle);
 	}
 
-	addr += sizeof (glob_instr);
+	addr += glob_instr.size();
 
 	for (i = addr; i < v.size(); i++) {
 		outv.push_back(v[i]);
@@ -240,6 +249,119 @@ static Elf64_Shdr *elf_get_section(unsigned char *v, const char *sh_name)
 	return nullptr;
 }
 
+static Elf64_Phdr *elf_get_region(unsigned char *v, uint64_t addr)
+{
+	Elf64_Ehdr *elf_hdr;
+	Elf64_Phdr *ph_entry;
+	int i;
+
+	elf_hdr = (Elf64_Ehdr *) &v[0];
+	ph_entry = (Elf64_Phdr *) (v + elf_hdr->e_phoff);
+
+	for (i = 0; i < elf_hdr->e_phnum; i++) {
+		if ((ph_entry[i].p_paddr <= addr) &&
+				(ph_entry[i].p_paddr + ph_entry[i].p_filesz > addr)) {
+			return &ph_entry[i];
+		}
+	}
+
+	return nullptr;
+}
+
+static int elf_get_func_addr(unsigned char *v, const char *sym_name,
+                            uint64_t *sym_addr)
+{
+	Elf64_Ehdr *elf_hdr;
+	Elf64_Shdr *sh_entry;
+	Elf64_Shdr *symtab = nullptr;
+	Elf64_Shdr *strtab = nullptr;
+	Elf64_Sym *sym;
+	const char *str;
+	const char *sh_str;
+	int i;
+
+	if (!sym_addr) {
+		return -1;
+	}
+
+	elf_hdr = (Elf64_Ehdr *) &v[0];
+	sh_entry = (Elf64_Shdr *) (v + elf_hdr->e_shoff);
+	sh_str = (const char *) (v + sh_entry[elf_hdr->e_shstrndx].sh_offset);
+
+	for (i = 0; i < elf_hdr->e_shnum; i++) {
+		if (symtab && strtab) {
+			break;
+		} else if (!strcmp(sh_str + sh_entry[i].sh_name, ".symtab")) {
+			symtab = &sh_entry[i];
+		} else if (!strcmp(sh_str + sh_entry[i].sh_name, ".strtab")) {
+			strtab = &sh_entry[i];
+		}
+	}
+
+	sym = (Elf64_Sym *) (v + symtab->sh_offset);
+	str = (const char *) (v + strtab->sh_offset);
+
+	for (i = 0; i < symtab->sh_size / symtab->sh_entsize; i++) {
+		if (ELF64_ST_TYPE(sym[i].st_info) != STT_FUNC) {
+			continue;
+		}
+
+		if (!strcmp(str + sym[i].st_name, sym_name)) {
+			*sym_addr = sym[i].st_value;
+
+			return 0;
+		}
+	}
+
+	return -1;
+}
+
+static int elf_get_instr_addr(unsigned char *v, const char *func_name)
+{
+	int ret;
+	uint64_t func_addr;
+	csh disas_handle;
+	cs_insn *insn;
+	cs_x86 *x86;
+	size_t insn_count;
+
+	ret = elf_get_func_addr(v, func_name, &func_addr);
+	if (ret < 0) {
+		return -1;
+	}
+
+	if (cs_open(CS_ARCH_X86, CS_MODE_64, &disas_handle) != CS_ERR_OK) {
+		fprintf(stderr, "failed to open capstone");
+
+		return -1;
+	}
+
+	cs_option(disas_handle, CS_OPT_DETAIL, CS_OPT_ON);
+
+	insn_count = cs_disasm(disas_handle,
+	                       (const uint8_t *) &v[func_addr],
+	                       4,
+	                       func_addr,
+	                       0,
+	                       &insn);
+	if (insn_count < 1) {
+		fprintf(stderr, "capstone failed to disasm\n");
+
+		return -1;
+	}
+
+	glob_instr_addr = func_addr;
+
+	if (insn[0].id == X86_INS_ENDBR64) {
+		glob_instr_addr += insn[0].size;
+	}
+
+	cs_free(insn, insn_count);
+	cs_close(&disas_handle);
+
+	return 0;
+}
+
 static void modify_elf_header(unsigned char *v)
 {
 	Elf64_Ehdr *elf_hdr;
@@ -265,8 +387,8 @@ static void modify_elf_header(unsigned char *v)
 
 	for (i = 0; i < elf_hdr->e_shnum; i++) {
 		if (!strcmp(".fini", sh_str + sh_entry[i].sh_name)) {
-			sh_entry[i].sh_addr += sizeof (glob_instr);
-			sh_entry[i].sh_offset += sizeof (glob_instr);
+			sh_entry[i].sh_addr += glob_instr.size();
+			sh_entry[i].sh_offset += glob_instr.size();
 			sh_entry[i].sh_addralign = 0;
 			fini_id = i;
 
@@ -294,8 +416,8 @@ static void modify_elf_header(unsigned char *v)
 			(ph_entry[i].p_paddr + ph_entry[i].p_filesz >
 			         sh_entry[fini_id].sh_addr)) {
 			/* .fini is located in this segment */
-			ph_entry[i].p_filesz += sizeof (glob_instr);
-			ph_entry[i].p_memsz += sizeof (glob_instr);
+			ph_entry[i].p_filesz += glob_instr.size();
+			ph_entry[i].p_memsz += glob_instr.size();
 		}
 	}
 	printf("\n");
@@ -340,6 +462,11 @@ static int prepare_elf(const char *fname)
 		goto out;
 	}
 
+	ret = elf_get_instr_addr((unsigned char *) buffer.data(), glob_func_name.data());
+	if (ret < 0) {
+		goto out;
+	}
+
 	insert_profiler_code(buffer, out_buffer);
 
 	modify_elf_header((unsigned char *)out_buffer.data());
@@ -353,10 +480,57 @@ out:
 	return ret;
 }
 
+static void get_instr_from_file(const char *file)
+{
+	std::string line;
+	std::ifstream in(file);
+	int i, j;
+
+	while (std::getline(in, line)) {
+		switch (i) {
+		case 0:
+			glob_func_name = line.data();
+
+			break;
+		case 1:
+			/* enter, exit */
+			break;
+		case 2:
+			j = 0;
+
+			while (j < line.size()) {
+				if (line[j] == ' ') {
+					j++;
+
+					continue;
+				}
+
+				glob_instr.push_back(std::stoul(line.substr(j, 2), 0, 16));
+
+				j += 2;
+			}
+
+			printf("instr: ");
+			for (j = 0; j < glob_instr.size(); j++) {
+				printf("%02x ", glob_instr[j]);
+			}
+			printf("\n");
+
+			break;
+		}
+
+		if (++i == 3) {
+			break;
+		}
+	}
+}
+
 int main(int argc, char **argv)
 {
 	pid_t pid;
 	int waitres;
+	char *file;
+	int c;
 
 	if (argc < 2) {
 		fprintf(stderr, "Error: ELF missed\n");
@@ -364,16 +538,36 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-	printf("Profiling ELF: %s\n", argv[1]);
+	while ((c = getopt(argc, argv, "hf:")) != -1) {
+		switch (c) {
+		case 'f':
+			use_file = true;
+			file = optarg;
 
-	prepare_elf(argv[1]);
+			break;
+		case 'h':
+			break;
+		}
+	}
+
+	printf("Profiling ELF: %s\n", argv[argc - 1]);
+
+	if (use_file) {
+		get_instr_from_file(file);
+	} else {
+		fprintf(stderr, "Please, provide file with -f <file>");
+
+		return 0;
+	}
+
+	prepare_elf(argv[argc - 1]);
 
 	pid = fork();
 
 	if (pid == -1) {
 		perror("fork error");
 	} else if (pid == 0) {
-		execv(argv[1], argv + 1);
+		execv(argv[argc - 1], argv + argc - 1);
 
 		printf("Unknown command\n");
 		exit(-1);
