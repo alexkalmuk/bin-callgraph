@@ -12,7 +12,10 @@
 #include <regex>
 
 #include <disasm/disasm.h>
+
+#ifdef USE_CAPSTONE
 #include <disasm/capstone_disasm.h>
+#endif
 
 static uint64_t text_end;
 static bool use_file = false;
@@ -25,6 +28,23 @@ static Elf64_Shdr *elf_get_section(unsigned char *v, const char *sh_name);
 static Elf64_Phdr *elf_get_region(unsigned char *v, uint64_t addr);
 static int elf_get_func_addr(unsigned char *v, const char *sym_name,
                             uint64_t *sym_addr);
+
+static b_dis *create_dis(unsigned char *buffer, uint64_t address, size_t size)
+{
+#ifdef USE_CAPSTONE
+	b_capstone_dis *cdis = new b_capstone_dis(buffer, address, size);
+#endif
+	b_dis *dis = cdis;
+
+	return dis;
+}
+
+static void destroy_dis(b_dis *dis)
+{
+#ifdef USE_CAPSTONE
+	delete (b_capstone_dis *) dis;
+#endif
+}
 
 static void modify_ins(b_instr *ins)
 {
@@ -87,10 +107,8 @@ static int insert_profiler_code(std::vector<char> &v, std::vector<char> &outv)
 			addr++;
 		}
 
-		b_capstone_dis cdis = b_capstone_dis(
-		                       &vd[code_shdr->sh_offset],
-		                       code_shdr->sh_offset, code_shdr->sh_size);
-		b_dis *dis = &cdis;
+		b_dis *dis = create_dis(&vd[code_shdr->sh_offset],
+		                        code_shdr->sh_offset, code_shdr->sh_size);
 		uint8_t *bytes;
 
 		for (i = 0; i < dis->insn.size(); i++) {
@@ -110,6 +128,8 @@ static int insert_profiler_code(std::vector<char> &v, std::vector<char> &outv)
 			}
 			addr += dis->insn[i]->size();
 		}
+
+		destroy_dis(dis);
 	}
 
 	addr += glob_instr.size();
@@ -218,14 +238,15 @@ static int elf_get_instr_addr(unsigned char *v, const char *func_name)
 	if (ret < 0) {
 		return -1;
 	}
-	b_capstone_dis cdis = b_capstone_dis(&v[func_addr], func_addr, 4);
-	b_dis *dis = &cdis;
+	b_dis *dis = create_dis(&v[func_addr], func_addr, 4);
 
 	glob_instr_addr = func_addr;
 
 	if (dis->insn[0]->is_endbr64()) {
 		glob_instr_addr += dis->insn[0]->size();
 	}
+
+	destroy_dis(dis);
 
 	printf("\n glob_instr_addr = 0x%08lx\n", glob_instr_addr);
 

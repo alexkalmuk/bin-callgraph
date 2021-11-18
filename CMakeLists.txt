@@ -14,6 +14,8 @@ if (NOT ${CAPSTONE_LIB} STREQUAL "")
 	link_directories(${CAPSTONE_LIB})
 endif()
 
+add_compile_options(-DUSE_CAPSTONE)
+
 add_executable(instr
 	instr.cpp
 	disasm/capstone.cpp
