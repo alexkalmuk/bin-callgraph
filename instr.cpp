@@ -11,9 +11,6 @@
 #include <vector>
 #include <regex>
 
-#include <capstone/platform.h>
-#include <capstone/capstone.h>
-
 #include <disasm/disasm.h>
 #include <disasm/capstone_disasm.h>
 
@@ -29,7 +26,6 @@ static Elf64_Phdr *elf_get_region(unsigned char *v, uint64_t addr);
 static int elf_get_func_addr(unsigned char *v, const char *sym_name,
                             uint64_t *sym_addr);
 
-#if 1
 static void modify_ins(b_instr *ins)
 {
 	int i;
@@ -63,7 +59,6 @@ static void modify_ins(b_instr *ins)
 		op->deposit_val(shift);
 	}
 }
-#endif
 
 static int insert_profiler_code(std::vector<char> &v, std::vector<char> &outv)
 {
