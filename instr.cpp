@@ -14,6 +14,9 @@
 #include <capstone/platform.h>
 #include <capstone/capstone.h>
 
+#include <disasm/disasm.h>
+#include <disasm/capstone_disasm.h>
+
 static uint64_t text_end;
 static bool use_file = false;
 
@@ -26,131 +29,47 @@ static Elf64_Phdr *elf_get_region(unsigned char *v, uint64_t addr);
 static int elf_get_func_addr(unsigned char *v, const char *sym_name,
                             uint64_t *sym_addr);
 
-/* TODO It's a workaround to find op.imm or op.mem.disp.
- * AFAIK, capstone cannot assemble the modified instruction. */
-static uint8_t *get_op_pos(csh *disas_handle, cs_insn *ins,
-                           cs_x86_op *op, int64_t *shiftp, int *op_size)
+#if 1
+static void modify_ins(b_instr *ins)
 {
-	int i, j;
-	int n;
+	int i;
 	int64_t shift;
-	bool found = false;
-
-	switch (op->type) {
-	case X86_OP_MEM:
-		if (op->mem.base != X86_REG_RIP) {
-			goto bad_op;
-		}
-
-		shift = op->mem.disp;
-
-		break;
-	case X86_OP_IMM:
-		if (!cs_insn_group(*disas_handle, ins, CS_GRP_JUMP) &&
-		        !cs_insn_group(*disas_handle, ins, CS_GRP_CALL)) {
-			goto bad_op;
-		}
-
-		shift = op->imm - (ins->address + ins->size);
-
-		break;
-	default:
-bad_op:
-		return nullptr;
-	}
-
-	/* FIXME op->size is not valid in capstone, so we calculate
-	 * operand's size manually. */
-	if (abs(shift) > 0xfffffffful) {
-		n = 8;
-	} else if (abs(shift) > 0xfffful) {
-		n = 4;
-	} else if (abs(shift) > 0xfful) {
-		n = 2;
-	} else {
-		n = 1;
-	}
-
-	for (i = 0; i < ins->size; i++) {
-		uint8_t b;
-
-		for (j = 0; j < n; j++) {
-			b = (shift >> (8 * j)) & 0xff;
-
-			if ((ins->bytes + i)[j] != b) {
-				break;
-			}
-		}
-
-		if (j == n) {
-			found = true;
-
-			break;
-		}
-	}
-
-	if (found) {
-		*shiftp = shift;
-		*op_size = n;
-	}
-
-	return found ? ins->bytes + i : nullptr;
-}
-
-static void modify_ins(csh *disas_handle, cs_insn *ins)
-{
-	int i, j;
-	cs_x86 *x86;
-	cs_x86_op *op;
-	int op_size;
-	uint8_t *op_pos;
 	uint64_t dst_addr;
-	int64_t shift;
+	b_op *op;
 
-	printf("0x%" PRIx64 ":\t%s\t%s\n",
-		ins->address, ins->mnemonic, ins->op_str);
+	for (i = 0; i < ins->ops.size(); i++) {
+		op = ins->ops[i];
 
-	x86 = &(ins->detail->x86);
-
-	for (i = 0; i < x86->op_count; i++) {
-		op = &(x86->operands[i]);
-
-		op_pos = get_op_pos(disas_handle, ins, op, &shift, &op_size);
-
-		if (!op_pos) {
+		if (!op->is_relative()) {
 			continue;
 		}
 
-		dst_addr = ins->address + ins->size + shift;
+		op->extract_val(&shift);
+
+		dst_addr = ins->address() + ins->size() + shift;
 
 		if (dst_addr < text_end) {
-			if ((ins->address < glob_instr_addr) &&
+			if ((ins->address() < glob_instr_addr) &&
 					(dst_addr > glob_instr_addr)) {
 				shift += glob_instr.size();
-			} else if ((ins->address > glob_instr_addr) &&
+			} else if ((ins->address() > glob_instr_addr) &&
 			           (dst_addr < glob_instr_addr)) {
 				shift -= glob_instr.size();
 			}
-		} else if (ins->address + ins->size > glob_instr_addr) {
+		} else if (ins->address() + ins->size() > glob_instr_addr) {
 			shift -= glob_instr.size();
 		}
 
-		/* modify instuction */
-		for (j = 0; j < op_size; j++) {
-			op_pos[j] = (shift >> (8 * j)) & 0xff;
-		}
+		op->deposit_val(shift);
 	}
 }
+#endif
 
 static int insert_profiler_code(std::vector<char> &v, std::vector<char> &outv)
 {
-	csh disas_handle;
-	cs_insn *insn;
-	cs_x86 *x86;
-	size_t insn_count;
 	Elf64_Shdr *code_shdr;
 	Elf64_Phdr *code_region;
-	char *vd = v.data();
+	unsigned char *vd = (unsigned char *) v.data();
 	int i, j, k;
 	uint64_t addr = 0;
 	const char *sections[2] = { ".text", ".fini" };
@@ -173,31 +92,13 @@ static int insert_profiler_code(std::vector<char> &v, std::vector<char> &outv)
 			addr++;
 		}
 
-		if (cs_open(CS_ARCH_X86, CS_MODE_64, &disas_handle) != CS_ERR_OK) {
-			fprintf(stderr, "failed to open capstone");
+		b_capstone_dis cdis = b_capstone_dis(
+		                       &vd[code_shdr->sh_offset],
+		                       code_shdr->sh_offset, code_shdr->sh_size);
+		b_dis *dis = &cdis;
+		uint8_t *bytes;
 
-			return -1;
-		}
-
-		cs_option(disas_handle, CS_OPT_DETAIL, CS_OPT_ON);
-
-		printf("sh_offset = 0x%08lx, sh_size=0x%lx\n", 
-			code_shdr->sh_offset,
-			code_shdr->sh_size);
-
-		insn_count = cs_disasm(disas_handle,
-		                       (const uint8_t *)&vd[code_shdr->sh_offset],
-		                       code_shdr->sh_size,
-		                       code_shdr->sh_offset,
-		                       0,
-		                       &insn);
-		if (insn_count < 1) {
-			fprintf(stderr, "capstone failed to disasm\n");
-
-			return -1;
-		}
-
-		for (i = 0; i < insn_count; i++) {
+		for (i = 0; i < dis->insn.size(); i++) {
 			/* push new instr */
 			if (addr == glob_instr_addr) {
 				for (j = 0; j < glob_instr.size(); j++) {
@@ -205,18 +106,15 @@ static int insert_profiler_code(std::vector<char> &v, std::vector<char> &outv)
 				}
 			}
 
-			modify_ins(&disas_handle, &insn[i]);
+			modify_ins(dis->insn[i]);
 
-			for (j = 0; j < insn[i].size; j++) {
-				outv.push_back(insn[i].bytes[j]);
+			bytes = dis->insn[i]->bytes();
+
+			for (j = 0; j < dis->insn[i]->size(); j++) {
+				outv.push_back(bytes[j]);
 			}
-			addr += insn[i].size;
+			addr += dis->insn[i]->size();
 		}
-
-		printf("\n\n");
-
-		cs_free(insn, insn_count);
-		cs_close(&disas_handle);
 	}
 
 	addr += glob_instr.size();
@@ -320,44 +218,21 @@ static int elf_get_instr_addr(unsigned char *v, const char *func_name)
 {
 	int ret;
 	uint64_t func_addr;
-	csh disas_handle;
-	cs_insn *insn;
-	cs_x86 *x86;
-	size_t insn_count;
 
 	ret = elf_get_func_addr(v, func_name, &func_addr);
 	if (ret < 0) {
 		return -1;
 	}
-
-	if (cs_open(CS_ARCH_X86, CS_MODE_64, &disas_handle) != CS_ERR_OK) {
-		fprintf(stderr, "failed to open capstone");
-
-		return -1;
-	}
-
-	cs_option(disas_handle, CS_OPT_DETAIL, CS_OPT_ON);
-
-	insn_count = cs_disasm(disas_handle,
-	                       (const uint8_t *) &v[func_addr],
-	                       4,
-	                       func_addr,
-	                       0,
-	                       &insn);
-	if (insn_count < 1) {
-		fprintf(stderr, "capstone failed to disasm\n");
-
-		return -1;
-	}
+	b_capstone_dis cdis = b_capstone_dis(&v[func_addr], func_addr, 4);
+	b_dis *dis = &cdis;
 
 	glob_instr_addr = func_addr;
 
-	if (insn[0].id == X86_INS_ENDBR64) {
-		glob_instr_addr += insn[0].size;
+	if (dis->insn[0]->is_endbr64()) {
+		glob_instr_addr += dis->insn[0]->size();
 	}
 
-	cs_free(insn, insn_count);
-	cs_close(&disas_handle);
+	printf("\n glob_instr_addr = 0x%08lx\n", glob_instr_addr);
 
 	return 0;
 }
@@ -391,10 +266,11 @@ static void modify_elf_header(unsigned char *v)
 			sh_entry[i].sh_offset += glob_instr.size();
 			sh_entry[i].sh_addralign = 0;
 			fini_id = i;
-
+#if 0
 			printf(".fini sh_addr      = 0x%08lx\n", sh_entry[i].sh_addr);
 			printf(".fini sh_offset    = 0x%08lx\n", sh_entry[i].sh_offset);
 			printf(".fini sh_addralign = 0x%08lx\n", sh_entry[i].sh_addralign);
+#endif
 		}
 
 		if (!strcmp(".dynamic", sh_str + sh_entry[i].sh_name)) {
@@ -402,8 +278,9 @@ static void modify_elf_header(unsigned char *v)
 		}
 	}
 
-	printf("\nPhdr:\n");
+	//printf("\nPhdr:\n");
 	for (i = 0; i < elf_hdr->e_phnum; i++) {
+#if 0
 		printf("  [%d] p_offset = 0x%08lx\n", i, ph_entry[i].p_offset);
 		printf("  [%d] p_vaddr  = 0x%08lx\n", i, ph_entry[i].p_vaddr);
 		printf("  [%d] p_paddr  = 0x%08lx\n", i, ph_entry[i].p_paddr);
@@ -411,6 +288,7 @@ static void modify_elf_header(unsigned char *v)
 		printf("  [%d] p_memsz  = 0x%08lx\n", i, ph_entry[i].p_memsz);
 		printf("  [%d] p_align  = 0x%08lx\n", i, ph_entry[i].p_align);
 		printf("\n");
+#endif
 
 		if ((ph_entry[i].p_paddr <= sh_entry[fini_id].sh_addr) &&
 			(ph_entry[i].p_paddr + ph_entry[i].p_filesz >
@@ -420,7 +298,7 @@ static void modify_elf_header(unsigned char *v)
 			ph_entry[i].p_memsz += glob_instr.size();
 		}
 	}
-	printf("\n");
+	//printf("\n");
 
 	i = 0;
 	while (dyn_entry[i].d_tag != DT_NULL) {
