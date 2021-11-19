@@ -65,8 +65,6 @@ public:
 	b_capstone_dis(unsigned char *buffer, uint64_t address, size_t size);
 	~b_capstone_dis();
 
-	csh *get_disas_handle();
-
 private:
 	csh disas_handle;
 	int insn_count;
