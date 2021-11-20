@@ -13,7 +13,9 @@
 
 #include <disasm/disasm.h>
 
-#ifdef USE_CAPSTONE
+#if defined(USE_ZYDIS)
+#include <disasm/zydis_disasm.h>
+#elif defined(USE_CAPSTONE)
 #include <disasm/capstone_disasm.h>
 #endif
 
@@ -31,8 +33,12 @@ static int elf_get_func_addr(unsigned char *v, const char *sym_name,
 
 static b_dis *create_dis(unsigned char *buffer, uint64_t address, size_t size)
 {
-#ifdef USE_CAPSTONE
+#if defined(USE_ZYDIS)
+	b_zydis_dis *cdis = new b_zydis_dis(buffer, address, size);
+#elif defined(USE_CAPSTONE)
 	b_capstone_dis *cdis = new b_capstone_dis(buffer, address, size);
+#else
+	#error "No disassembler selected (capstone, zydis)"
 #endif
 	b_dis *dis = cdis;
 
@@ -41,8 +47,12 @@ static b_dis *create_dis(unsigned char *buffer, uint64_t address, size_t size)
 
 static void destroy_dis(b_dis *dis)
 {
-#ifdef USE_CAPSTONE
+#if defined(USE_ZYDIS)
+	delete (b_zydis_dis *) dis;
+#elif defined(USE_CAPSTONE)
 	delete (b_capstone_dis *) dis;
+#else
+	#error "No disassembler selected (capstone, zydis)"
 #endif
 }
 

@@ -13,11 +13,20 @@ endif()
 if (NOT ${CAPSTONE_LIB} STREQUAL "")
 	link_directories(${CAPSTONE_LIB})
 endif()
+#add_compile_options(-DUSE_CAPSTONE)
 
-add_compile_options(-DUSE_CAPSTONE)
+include_directories(
+	${PROJECT_SOURCE_DIR}/../zydis/dependencies/zycore/include
+	${PROJECT_SOURCE_DIR}/../zydis/include
+	${PROJECT_SOURCE_DIR}/../zydis/build/zycore
+	${PROJECT_SOURCE_DIR}/../zydis/build
+)
+link_directories(${PROJECT_SOURCE_DIR}/../zydis/build)
+add_compile_options(-DUSE_ZYDIS)
 
 add_executable(instr
 	instr.cpp
 	disasm/capstone.cpp
+	disasm/zydis.cpp
 )
-target_link_libraries(instr capstone)
+target_link_libraries(instr capstone Zydis)
