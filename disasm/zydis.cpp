@@ -86,6 +86,18 @@ uint8_t *b_zydis_instr::bytes()
 		return nullptr;
 	}
 
+	/* Zydis can encode an instruction to another bytes,
+	 * smaller in number (i.e. 8 -> 4). In that case, we add
+	 * missing NOP's to maintain initial instuction length. */
+	if (instr_size != ins->length) {
+		int i;
+
+		for (i = instr_size; i < ins->length; i++) {
+			/* Insert NOP's */
+			instr_bytes[i] = 0x90;
+		}
+	}
+
 	return instr_bytes;
 }
 
