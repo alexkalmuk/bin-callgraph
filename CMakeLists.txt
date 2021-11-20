@@ -15,13 +15,12 @@ if (NOT ${CAPSTONE_LIB} STREQUAL "")
 endif()
 #add_compile_options(-DUSE_CAPSTONE)
 
-include_directories(
-	${PROJECT_SOURCE_DIR}/../zydis/dependencies/zycore/include
-	${PROJECT_SOURCE_DIR}/../zydis/include
-	${PROJECT_SOURCE_DIR}/../zydis/build/zycore
-	${PROJECT_SOURCE_DIR}/../zydis/build
-)
-link_directories(${PROJECT_SOURCE_DIR}/../zydis/build)
+# Register Zydis dependency.
+# Disable build of tools and examples.
+option(ZYDIS_BUILD_TOOLS "" OFF)
+option(ZYDIS_BUILD_EXAMPLES "" OFF)
+add_subdirectory("deps/zydis")
+
 add_compile_options(-DUSE_ZYDIS)
 
 add_executable(instr
