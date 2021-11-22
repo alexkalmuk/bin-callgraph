@@ -300,8 +300,6 @@ static int elf_get_instr_addr(unsigned char *v,
 
 	*instr_addr = addr;
 
-	printf("\n instr addr = 0x%08lx\n", addr);
-
 	return 0;
 }
 
@@ -393,6 +391,10 @@ static void get_instr_from_file(unsigned char *buffer)
 	struct instr_info ins_info;
 
 	while (std::getline(in, line)) {
+		if (!line.size()) {
+			continue;
+		}
+
 		switch (i) {
 		case 0:
 			ret = elf_get_instr_addr(buffer, line.data(), &ins_info.addr);
@@ -422,7 +424,7 @@ static void get_instr_from_file(unsigned char *buffer)
 				j += 2;
 			}
 
-			printf("instr: ");
+			printf("instr (addr=0x%08lx): ", ins_info.addr);
 			for (j = 0; j < ins_info.bytes.size(); j++) {
 				printf("%02x ", ins_info.bytes[j]);
 			}
@@ -434,7 +436,8 @@ static void get_instr_from_file(unsigned char *buffer)
 		}
 
 		if (++i == 3) {
-			break;
+			/* Process next instruction */
+			i = 0;
 		}
 	}
 }
