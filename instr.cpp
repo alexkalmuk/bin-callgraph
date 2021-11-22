@@ -19,12 +19,16 @@
 #include <disasm/capstone_disasm.h>
 #endif
 
+struct instr_info {
+	uint64_t addr;
+	std::vector<unsigned char> bytes;
+};
+
+static std::vector<struct instr_info> ins_v;
+
 static uint64_t text_end;
 static bool use_file = false;
-
-static std::string glob_func_name;
-static uint64_t glob_instr_addr;
-static std::vector<unsigned char> glob_instr;
+static char *instr_file;
 
 static Elf64_Shdr *elf_get_section(unsigned char *v, const char *sh_name);
 static Elf64_Phdr *elf_get_region(unsigned char *v, uint64_t addr);
@@ -56,11 +60,47 @@ static void destroy_dis(b_dis *dis)
 #endif
 }
 
+static int64_t calc_new_shift(b_instr *ins, int64_t shift)
+{
+	uint64_t dst_addr;
+	uint64_t start, stop;
+	int64_t val = 0;
+	int i;
+
+	dst_addr = ins->address() + ins->size() + shift;
+
+	if (ins->address() >= dst_addr) {
+		start = dst_addr;
+		stop = ins->address();
+	} else {
+		start = ins->address();
+		stop = dst_addr;
+	}
+
+	if (dst_addr < text_end) {
+		for (i = 0; i < ins_v.size(); i++) {
+			if ((ins_v[i].addr >= start) && (ins_v[i].addr < stop)) {
+				val += ins_v[i].bytes.size(); /* instr size */
+			}
+		}
+		val *= ins->address() < dst_addr ? 1 : -1;
+	} else {
+		for (i = 0; i < ins_v.size(); i++) {
+			if (ins_v[i].addr < start) {
+				val -= ins_v[i].bytes.size(); /* instr size */
+			}
+		}
+	}
+
+	shift += val;
+
+	return shift;
+}
+
 static void modify_ins(b_instr *ins)
 {
 	int i;
 	int64_t shift;
-	uint64_t dst_addr;
 	b_op *op;
 
 	for (i = 0; i < ins->ops.size(); i++) {
@@ -72,19 +112,7 @@ static void modify_ins(b_instr *ins)
 
 		op->extract_val(&shift);
 
-		dst_addr = ins->address() + ins->size() + shift;
-
-		if (dst_addr < text_end) {
-			if ((ins->address() < glob_instr_addr) &&
-					(dst_addr > glob_instr_addr)) {
-				shift += glob_instr.size();
-			} else if ((ins->address() > glob_instr_addr) &&
-			           (dst_addr < glob_instr_addr)) {
-				shift -= glob_instr.size();
-			}
-		} else if (ins->address() + ins->size() > glob_instr_addr) {
-			shift -= glob_instr.size();
-		}
+		shift = calc_new_shift(ins, shift);
 
 		op->deposit_val(shift);
 	}
@@ -122,10 +150,14 @@ static int insert_profiler_code(std::vector<char> &v, std::vector<char> &outv)
 		uint8_t *bytes;
 
 		for (i = 0; i < dis->insn.size(); i++) {
-			/* push new instr */
-			if (addr == glob_instr_addr) {
-				for (j = 0; j < glob_instr.size(); j++) {
-					outv.push_back(glob_instr[j]);
+			/* push new instr. TODO sort instrs before */
+			for (j = 0; j < ins_v.size(); j++) {
+				if (addr == ins_v[j].addr) {
+					int n;
+
+					for (n = 0; n < ins_v[j].bytes.size(); n++) {
+						outv.push_back(ins_v[j].bytes[n]);
+					}
 				}
 			}
 
@@ -142,7 +174,9 @@ static int insert_profiler_code(std::vector<char> &v, std::vector<char> &outv)
 		destroy_dis(dis);
 	}
 
-	addr += glob_instr.size();
+	for (i = 0; i < ins_v.size(); i++) {
+		addr += ins_v[i].bytes.size();
+	}
 
 	for (i = addr; i < v.size(); i++) {
 		outv.push_back(v[i]);
@@ -239,10 +273,16 @@ static int elf_get_func_addr(unsigned char *v, const char *sym_name,
 	return -1;
 }
 
-static int elf_get_instr_addr(unsigned char *v, const char *func_name)
+static int elf_get_instr_addr(unsigned char *v,
+                              const char *func_name, uint64_t *instr_addr)
 {
 	int ret;
 	uint64_t func_addr;
+	uint64_t addr;
+
+	if (!instr_addr) {
+		return -1;
+	}
 
 	ret = elf_get_func_addr(v, func_name, &func_addr);
 	if (ret < 0) {
@@ -250,15 +290,17 @@ static int elf_get_instr_addr(unsigned char *v, const char *func_name)
 	}
 	b_dis *dis = create_dis(&v[func_addr], func_addr, 4);
 
-	glob_instr_addr = func_addr;
+	addr = func_addr;
 
 	if (dis->insn[0]->is_endbr64()) {
-		glob_instr_addr += dis->insn[0]->size();
+		addr += dis->insn[0]->size();
 	}
 
 	destroy_dis(dis);
 
-	printf("\n glob_instr_addr = 0x%08lx\n", glob_instr_addr);
+	*instr_addr = addr;
+
+	printf("\n instr addr = 0x%08lx\n", addr);
 
 	return 0;
 }
@@ -269,7 +311,7 @@ static void modify_elf_header(unsigned char *v)
 	Elf64_Shdr *sh_entry;
 	Elf64_Phdr *ph_entry;
 	Elf64_Dyn *dyn_entry;
-	int i;
+	int i, j;
 	int fini_id;
 	char *sh_str;
 
@@ -288,8 +330,11 @@ static void modify_elf_header(unsigned char *v)
 
 	for (i = 0; i < elf_hdr->e_shnum; i++) {
 		if (!strcmp(".fini", sh_str + sh_entry[i].sh_name)) {
-			sh_entry[i].sh_addr += glob_instr.size();
-			sh_entry[i].sh_offset += glob_instr.size();
+			for (j = 0; j < ins_v.size(); j++) {
+				sh_entry[i].sh_addr += ins_v[j].bytes.size();
+				sh_entry[i].sh_offset += ins_v[j].bytes.size();
+			}
+
 			sh_entry[i].sh_addralign = 0;
 			fini_id = i;
 #if 0
@@ -320,8 +365,10 @@ static void modify_elf_header(unsigned char *v)
 			(ph_entry[i].p_paddr + ph_entry[i].p_filesz >
 			         sh_entry[fini_id].sh_addr)) {
 			/* .fini is located in this segment */
-			ph_entry[i].p_filesz += glob_instr.size();
-			ph_entry[i].p_memsz += glob_instr.size();
+			for (j = 0; j < ins_v.size(); j++) {
+				ph_entry[i].p_filesz += ins_v[j].bytes.size();
+				ph_entry[i].p_memsz += ins_v[j].bytes.size();
+			}
 		}
 	}
 	//printf("\n");
@@ -334,6 +381,61 @@ static void modify_elf_header(unsigned char *v)
 			break;
 		}
 		i++;
+	}
+}
+
+static void get_instr_from_file(unsigned char *buffer)
+{
+	std::string line;
+	std::ifstream in(instr_file);
+	int i, j;
+	int ret;
+	struct instr_info ins_info;
+
+	while (std::getline(in, line)) {
+		switch (i) {
+		case 0:
+			ret = elf_get_instr_addr(buffer, line.data(), &ins_info.addr);
+			if (ret < 0) {
+				fprintf(stderr, "Cannot resolve function's name: %s\n",
+					line.data());
+
+				break;
+			}
+
+			break;
+		case 1:
+			/* enter, exit */
+			break;
+		case 2:
+			j = 0;
+
+			while (j < line.size()) {
+				if (line[j] == ' ') {
+					j++;
+
+					continue;
+				}
+
+				ins_info.bytes.push_back(std::stoul(line.substr(j, 2), 0, 16));
+
+				j += 2;
+			}
+
+			printf("instr: ");
+			for (j = 0; j < ins_info.bytes.size(); j++) {
+				printf("%02x ", ins_info.bytes[j]);
+			}
+			printf("\n");
+
+			ins_v.push_back(ins_info);
+
+			break;
+		}
+
+		if (++i == 3) {
+			break;
+		}
 	}
 }
 
@@ -366,10 +468,7 @@ static int prepare_elf(const char *fname)
 		goto out;
 	}
 
-	ret = elf_get_instr_addr((unsigned char *) buffer.data(), glob_func_name.data());
-	if (ret < 0) {
-		goto out;
-	}
+	get_instr_from_file((unsigned char *) buffer.data());
 
 	insert_profiler_code(buffer, out_buffer);
 
@@ -384,56 +483,10 @@ out:
 	return ret;
 }
 
-static void get_instr_from_file(const char *file)
-{
-	std::string line;
-	std::ifstream in(file);
-	int i, j;
-
-	while (std::getline(in, line)) {
-		switch (i) {
-		case 0:
-			glob_func_name = line.data();
-
-			break;
-		case 1:
-			/* enter, exit */
-			break;
-		case 2:
-			j = 0;
-
-			while (j < line.size()) {
-				if (line[j] == ' ') {
-					j++;
-
-					continue;
-				}
-
-				glob_instr.push_back(std::stoul(line.substr(j, 2), 0, 16));
-
-				j += 2;
-			}
-
-			printf("instr: ");
-			for (j = 0; j < glob_instr.size(); j++) {
-				printf("%02x ", glob_instr[j]);
-			}
-			printf("\n");
-
-			break;
-		}
-
-		if (++i == 3) {
-			break;
-		}
-	}
-}
-
 int main(int argc, char **argv)
 {
 	pid_t pid;
 	int waitres;
-	char *file;
 	int c;
 
 	if (argc < 2) {
@@ -446,7 +499,7 @@ int main(int argc, char **argv)
 		switch (c) {
 		case 'f':
 			use_file = true;
-			file = optarg;
+			instr_file = optarg;
 
 			break;
 		case 'h':
@@ -456,9 +509,8 @@ int main(int argc, char **argv)
 
 	printf("Profiling ELF: %s\n", argv[argc - 1]);
 
-	if (use_file) {
-		get_instr_from_file(file);
-	} else {
+
+	if (!use_file) {
 		fprintf(stderr, "Please, provide file with -f <file>");
 
 		return 0;
