@@ -29,3 +29,11 @@ add_executable(instr
 	disasm/zydis.cpp
 )
 target_link_libraries(instr capstone Zydis)
+
+# Tests
+add_executable(single_func_modify_ecx
+	test/single_func_modify_ecx.c
+)
+add_executable(multi_func_modify_ecx
+	test/multi_func_modify_ecx.c
+)
