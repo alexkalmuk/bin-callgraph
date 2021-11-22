@@ -1,5 +1,5 @@
 #include <stdio.h>
- 
+
 int cycle(void)
 {
 	int i, j;
@@ -17,7 +17,7 @@ int cycle(void)
 
 	return j;
 }
- 
+
 int main(void)
 {
 	asm ("mov $0, %%ecx\n\t"
@@ -25,5 +25,5 @@ int main(void)
 
 	printf("Res = %d\n", cycle());
 
-    return 0;
+	return 0;
 }
