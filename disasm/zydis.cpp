@@ -36,6 +36,7 @@ b_zydis_dis::~b_zydis_dis()
 b_zydis_instr::b_zydis_instr(ZydisDecodedInstruction *zinstr, uint64_t addr)
 {
 	int i;
+	bool is_rel;
 
 	this->ins = zinstr;
 	this->addr = addr;
@@ -46,8 +47,10 @@ b_zydis_instr::b_zydis_instr(ZydisDecodedInstruction *zinstr, uint64_t addr)
 		/* TODO */
 	}
 
+	is_rel = (zinstr->attributes & ZYDIS_ATTRIB_IS_RELATIVE);
+
 	for (i = 0; i < enc_req.operand_count; i++) {
-		b_zydis_op *bop = new b_zydis_op(&enc_req.operands[i]);
+		b_zydis_op *bop = new b_zydis_op(&enc_req.operands[i], is_rel);
 
 		ops.push_back((b_op *) bop);
 	}
@@ -101,13 +104,18 @@ uint8_t *b_zydis_instr::bytes()
 	return instr_bytes;
 }
 
-b_zydis_op::b_zydis_op(ZydisEncoderOperand *op)
+b_zydis_op::b_zydis_op(ZydisEncoderOperand *op, bool instr_is_relative)
 {
 	this->op = op;
+	this->instr_is_relative = instr_is_relative;
 }
 
 bool b_zydis_op::is_relative()
 {
+	if (!instr_is_relative) {
+		return false;
+	}
+
 	switch (op->type) {
 	case ZYDIS_OPERAND_TYPE_IMMEDIATE:
 		return true;

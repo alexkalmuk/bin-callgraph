@@ -7,7 +7,7 @@
 
 class b_zydis_op : public b_op {
 public:
-	b_zydis_op(ZydisEncoderOperand *op);
+	b_zydis_op(ZydisEncoderOperand *op, bool instr_is_relative);
 
 	bool is_relative();
 	int extract_val(int64_t *rel);
@@ -15,6 +15,7 @@ public:
 
 private:
 	ZydisEncoderOperand *op;
+	bool instr_is_relative;
 };
 
 class b_zydis_instr : public b_instr {
