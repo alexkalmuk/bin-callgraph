@@ -436,6 +436,8 @@ static int get_instr_from_file(unsigned char *buffer)
 				goto out;
 			}
 
+			ins_info.bytes.clear();
+
 			break;
 		case 1:
 			/* enter, exit */
