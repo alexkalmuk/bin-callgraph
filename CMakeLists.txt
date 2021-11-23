@@ -37,3 +37,6 @@ add_executable(single_func_modify_ecx
 add_executable(multi_func_modify_ecx
 	test/multi_func_modify_ecx.c
 )
+add_executable(c++_single_func_modify_ecx
+	test/c++_single_func_modify_ecx.cpp
+)
