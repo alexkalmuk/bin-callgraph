@@ -14,7 +14,7 @@ static int cycle(void)
 		: "=r" (dst)
 		:);
 
-	printf("dst = 0x%08x\n", dst);
+	printf("dst1 = 0x%08x\n", dst);
 
 	return j;
 }
