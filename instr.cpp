@@ -4,6 +4,7 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <cxxabi.h>
 
 #include <fstream>
 #include <iostream>
@@ -235,6 +236,7 @@ static int elf_get_func_addr(unsigned char *v, const char *sym_name,
 	Elf64_Sym *sym;
 	const char *str;
 	const char *sh_str;
+	char *demangled_name;
 	int i;
 
 	if (!sym_addr) {
@@ -259,14 +261,43 @@ static int elf_get_func_addr(unsigned char *v, const char *sym_name,
 	str = (const char *) (v + strtab->sh_offset);
 
 	for (i = 0; i < symtab->sh_size / symtab->sh_entsize; i++) {
+		size_t len;
+		int status;
+		char *name;
+
 		if (ELF64_ST_TYPE(sym[i].st_info) != STT_FUNC) {
 			continue;
 		}
 
-		if (!strcmp(str + sym[i].st_name, sym_name)) {
+		demangled_name = abi::__cxa_demangle(str + sym[i].st_name,
+		                                     0, &len, &status);
+		if (demangled_name) {
+			name = demangled_name;
+		} else {
+			if (status == -2) {
+				/* -2: mangled_name is not a valid name under the C++ ABI mangling rules. */
+				/* I interpret this as the symbol is C-function.  */
+				name = const_cast<char *>(str + sym[i].st_name);
+			} else {
+				/* Symbol name invalid */
+				fprintf(stderr, "Symbol name is invalid: %s\n",
+				        str + sym[i].st_name);
+
+				continue;
+			}
+		}
+
+		if (!strcmp(name, sym_name)) {
 			*sym_addr = sym[i].st_value;
+			if (demangled_name) {
+				std::free(demangled_name);
+			}
 
 			return 0;
+		} else {
+			if (demangled_name) {
+				std::free(demangled_name);
+			}
 		}
 	}
 
