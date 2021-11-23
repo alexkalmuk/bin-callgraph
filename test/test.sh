@@ -2,7 +2,7 @@
 
 set -e
 
-TEST=$1
+TEST=$(basename $1)
 INSTR_FILE=$(find ../test -type f -name $TEST.txt)
 
 if [ -z $INSTR_FILE ]; then
@@ -13,7 +13,7 @@ fi
 echo "Running test $TEST"
 
 rm -f $TEST.out
-./instr -f $INSTR_FILE $TEST && chmod +x $TEST.out
+./instr -f $INSTR_FILE test/$TEST && chmod +x $TEST.out
 
 echo "Run out ELF"
 ./$TEST.out

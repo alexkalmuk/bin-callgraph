@@ -5,7 +5,7 @@ int cycle(void)
 	int i, j;
 	int dst = 0;
 
-	for (i = 0; i < 100000000; i++) {
+	for (i = 0; i < 1000; i++) {
 		j = i * 2;
 	}
 
@@ -20,10 +20,8 @@ int cycle(void)
 
 int main(void)
 {
-	asm ("mov $0, %%ecx\n\t"
-		: :);
-
-	printf("Res = %d\n", cycle());
+	asm ("mov $0, %%ecx\n\t" : :);
+	cycle();
 
 	return 0;
 }

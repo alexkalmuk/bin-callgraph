@@ -15,7 +15,7 @@ int B::cycle()
 	int i, j;
 	int dst = 0;
 
-	for (i = 0; i < 100000000; i++) {
+	for (i = 0; i < 1000; i++) {
 		j = i * 2;
 	}
 

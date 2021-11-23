@@ -30,21 +30,4 @@ add_executable(instr
 )
 target_link_libraries(instr capstone Zydis)
 
-# Tests
-add_executable(single_func_modify_ecx
-	test/single_func_modify_ecx.c
-)
-
-add_executable(multi_func_modify_ecx
-	test/multi_func_modify_ecx.c
-)
-
-add_executable(c++_single_func_modify_ecx
-	test/c++_single_func_modify_ecx.cpp
-)
-
-add_library(test_cycle STATIC test/static_lib/lib/lib_cycle.c)
-add_executable(multi_func_static_lib_modify_ecx
-	test/static_lib/main.c
-)
-target_link_libraries(multi_func_static_lib_modify_ecx test_cycle)
+add_subdirectory(test)
