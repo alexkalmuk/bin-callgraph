@@ -382,7 +382,7 @@ static void modify_elf_header(unsigned char *v)
 	}
 }
 
-static void get_instr_from_file(unsigned char *buffer)
+static int get_instr_from_file(unsigned char *buffer)
 {
 	std::string line;
 	std::ifstream in(instr_file);
@@ -402,7 +402,7 @@ static void get_instr_from_file(unsigned char *buffer)
 				fprintf(stderr, "Cannot resolve function's name: %s\n",
 					line.data());
 
-				break;
+				goto out;
 			}
 
 			break;
@@ -440,6 +440,9 @@ static void get_instr_from_file(unsigned char *buffer)
 			i = 0;
 		}
 	}
+
+out:
+	return ret;
 }
 
 static int prepare_elf(const char *fname)
@@ -471,7 +474,10 @@ static int prepare_elf(const char *fname)
 		goto out;
 	}
 
-	get_instr_from_file((unsigned char *) buffer.data());
+	ret = get_instr_from_file((unsigned char *) buffer.data());
+	if (ret < 0) {
+		goto out;
+	}
 
 	insert_profiler_code(buffer, out_buffer);
 
