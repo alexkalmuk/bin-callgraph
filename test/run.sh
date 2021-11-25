@@ -42,3 +42,12 @@ find_str "dst2 = 0x00000000"
 find_str "Run out ELF"
 find_str "dst1 = 0x12345678"
 find_str "dst2 = 0x87654321"
+
+echo -e "\n"
+rm -f $LOG
+$PROJECT_ROOT/test/test.sh test/multi_func_shared_lib_modify_ecx | tee $LOG
+find_str "dst1 = 0x00000000"
+find_str "dst2 = 0x00000000"
+find_str "Run out ELF"
+find_str "dst1 = 0x12345678"
+find_str "dst2 = 0x87654321"

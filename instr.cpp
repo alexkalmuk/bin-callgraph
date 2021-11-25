@@ -265,7 +265,9 @@ static int elf_get_func_addr(unsigned char *v, const char *sym_name,
 		int status;
 		char *name;
 
-		if (ELF64_ST_TYPE(sym[i].st_info) != STT_FUNC) {
+		if ((ELF64_ST_TYPE(sym[i].st_info) != STT_FUNC) ||
+				/* It means the symbol is not in any section, it's undefined. */
+				(sym[i].st_shndx == SHN_UNDEF)) {
 			continue;
 		}
 
@@ -430,10 +432,14 @@ static int get_instr_from_file(unsigned char *buffer)
 		case 0:
 			ret = elf_get_instr_addr(buffer, line.data(), &ins_info.addr);
 			if (ret < 0) {
-				fprintf(stderr, "Cannot resolve function's name: %s\n",
-					line.data());
+				//fprintf(stderr, "Cannot resolve function's name: %s\n",
+				//	line.data());
 
-				goto out;
+				/* Skip next lines to go to the next instruction */
+				std::getline(in, line);
+				std::getline(in, line);
+
+				continue;
 			}
 
 			ins_info.bytes.clear();
@@ -474,18 +480,19 @@ static int get_instr_from_file(unsigned char *buffer)
 		}
 	}
 
-out:
-	return ret;
+	in.close();
+
+	return 0;
 }
 
-static int prepare_elf(const char *fname)
+static int prepare_file(const char *fname)
 {
 	int ret = 0;
 	std::streamsize size;
 	std::string in_name(fname);
 	std::string filename = in_name.substr(in_name.find_last_of("/") + 1);
 	std::ifstream in(fname, std::ios::binary);
-	std::ofstream out(filename + std::string(".out"),
+	std::ofstream out(std::string("out/") + filename,
 		std::ios::binary);
 
 	if (!in.is_open() || !out.is_open()) {
@@ -525,6 +532,34 @@ out:
 	return ret;
 }
 
+static int prepare_elf(const char *path)
+{
+	std::string in_name = std::string(path);
+	std::string filename = in_name.substr(in_name.find_last_of("/") + 1);
+	std::ifstream in(filename + std::string(".libs"));
+	std::string line;
+	int ret;
+
+	printf("Handle file: %s\n", path);
+	ret = prepare_file(path);
+	if (ret < 0) {
+		goto out;
+	}
+	ins_v.clear();
+
+	while (std::getline(in, line)) {
+		printf("Handle file: %s\n", line.data());
+		ret = prepare_file(line.data());
+		if (ret < 0) {
+			goto out;
+		}
+		ins_v.clear();
+	}
+
+out:
+	return ret;
+}
+
 int main(int argc, char **argv)
 {
 	pid_t pid;
@@ -551,14 +586,15 @@ int main(int argc, char **argv)
 
 	printf("Profiling ELF: %s\n", argv[argc - 1]);
 
-
 	if (!use_file) {
 		fprintf(stderr, "Please, provide file with -f <file>");
 
 		return 0;
 	}
 
-	prepare_elf(argv[argc - 1]);
+	if (prepare_elf(argv[argc - 1]) < 0) {
+		return -1;
+	}
 
 	pid = fork();
 

@@ -15,3 +15,9 @@ add_executable(multi_func_static_lib_modify_ecx
 	static_lib/main.c
 )
 target_link_libraries(multi_func_static_lib_modify_ecx test_cycle)
+
+add_library(test_shared_cycle SHARED shared_lib/lib/lib_cycle.c)
+add_executable(multi_func_shared_lib_modify_ecx
+	shared_lib/main.c
+)
+target_link_libraries(multi_func_shared_lib_modify_ecx test_shared_cycle)
