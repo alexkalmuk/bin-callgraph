@@ -360,6 +360,12 @@ static void modify_elf_header(unsigned char *v)
 	sh_str = (char *) (v + sh_entry[elf_hdr->e_shstrndx].sh_offset);
 
 	for (i = 0; i < elf_hdr->e_shnum; i++) {
+		if (!strcmp(".text", sh_str + sh_entry[i].sh_name)) {
+			for (j = 0; j < ins_v.size(); j++) {
+				sh_entry[i].sh_size += ins_v[j].bytes.size();
+			}
+		}
+
 		if (!strcmp(".fini", sh_str + sh_entry[i].sh_name)) {
 			for (j = 0; j < ins_v.size(); j++) {
 				sh_entry[i].sh_addr += ins_v[j].bytes.size();
