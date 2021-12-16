@@ -386,9 +386,33 @@ static void modify_elf_header(unsigned char *v)
 		}
 	}
 
+	/* TODO Remove this check and adjust sections properly. */
+	/* Here we check that there is no intersections of sections. */
+	for (i = 0; i < elf_hdr->e_shnum; i++) {
+		if (!(sh_entry[i].sh_flags & SHF_ALLOC)) {
+			continue;
+		}
+
+		for (j = 0; j < elf_hdr->e_shnum; j++) {
+			if (!(sh_entry[j].sh_flags & SHF_ALLOC)) {
+				continue;
+			}
+
+			if ((sh_entry[i].sh_addr > sh_entry[j].sh_addr) &&
+				(sh_entry[i].sh_addr < (sh_entry[j].sh_addr + sh_entry[j].sh_size))) {
+				fprintf(stderr, "Error: pheaders overflow!\n");
+				printf("addr[%d] = 0x%lx, addr[%d]=0x%lx, sz[%d]=0x%lx\n",
+					i, sh_entry[i].sh_addr, j, sh_entry[j].sh_addr,
+					j, sh_entry[j].sh_size);
+				exit(1);
+			}
+		}
+	}
+
 	//printf("\nPhdr:\n");
 	for (i = 0; i < elf_hdr->e_phnum; i++) {
 #if 0
+		printf("  [%d] p_offset = 0x%08lx\n", i, ph_entry[i].p_type);
 		printf("  [%d] p_offset = 0x%08lx\n", i, ph_entry[i].p_offset);
 		printf("  [%d] p_vaddr  = 0x%08lx\n", i, ph_entry[i].p_vaddr);
 		printf("  [%d] p_paddr  = 0x%08lx\n", i, ph_entry[i].p_paddr);
@@ -418,7 +442,7 @@ static void modify_elf_header(unsigned char *v)
 			break;
 		}
 		i++;
-	}
+	}	
 }
 
 static int get_instr_from_file(unsigned char *buffer)
