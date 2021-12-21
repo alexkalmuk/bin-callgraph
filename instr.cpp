@@ -22,6 +22,7 @@
 
 struct instr_info {
 	uint64_t addr;
+	std::string type;
 	std::vector<unsigned char> bytes;
 };
 
@@ -336,6 +337,32 @@ static int elf_get_instr_addr(unsigned char *v,
 	return 0;
 }
 
+static int elf_alloc_bss_uint32(unsigned char *v, uint64_t *sym_addr)
+{
+	Elf64_Ehdr *elf_hdr;
+	Elf64_Shdr *sh_entry;
+	const char *sh_str;
+	int i;
+
+	if (!sym_addr) {
+		return -1;
+	}
+
+	elf_hdr = (Elf64_Ehdr *) &v[0];
+	sh_entry = (Elf64_Shdr *) (v + elf_hdr->e_shoff);
+	sh_str = (const char *) (v + sh_entry[elf_hdr->e_shstrndx].sh_offset);
+
+	for (i = 0; i < elf_hdr->e_shnum; i++) {
+		if (!strcmp(sh_str + sh_entry[i].sh_name, ".bss")) {
+			*sym_addr = sh_entry[i].sh_addr + sh_entry[i].sh_size;
+
+			return 0;
+		}
+	}
+
+	return -1;
+}
+
 static void modify_elf_header(unsigned char *v)
 {
 	Elf64_Ehdr *elf_hdr;
@@ -445,6 +472,24 @@ static void modify_elf_header(unsigned char *v)
 	}	
 }
 
+static int handle_func_calls_count(unsigned char *buffer,
+                                   struct instr_info &ins_info)
+{
+	int ret;
+	uint64_t var_addr;
+
+	ret = elf_alloc_bss_uint32(buffer, &var_addr);
+	if (ret < 0) {
+		fprintf(stderr, "Error allocating variable in .bss\n");
+
+		return -1;
+	}
+
+	printf("New allocated uint32 (address) : 0x%lx\n", var_addr);
+
+	return 0;
+}
+
 static int get_instr_from_file(unsigned char *buffer)
 {
 	std::string line;
@@ -452,6 +497,8 @@ static int get_instr_from_file(unsigned char *buffer)
 	int i, j;
 	int ret;
 	struct instr_info ins_info;
+
+	i = 0;
 
 	while (std::getline(in, line)) {
 		if (!line.size()) {
@@ -477,6 +524,8 @@ static int get_instr_from_file(unsigned char *buffer)
 			break;
 		case 1:
 			/* enter, exit */
+			ins_info.type = line;
+
 			break;
 		case 2:
 			j = 0;
@@ -491,6 +540,13 @@ static int get_instr_from_file(unsigned char *buffer)
 				ins_info.bytes.push_back(std::stoul(line.substr(j, 2), 0, 16));
 
 				j += 2;
+			}
+
+			if (ins_info.type == "func_calls_count") {
+				ret = handle_func_calls_count(buffer, ins_info);
+				if (ret < 0) {
+					return -1;
+				}
 			}
 
 			printf("instr (addr=0x%08lx): ", ins_info.addr);

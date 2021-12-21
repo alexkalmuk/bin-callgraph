@@ -21,3 +21,7 @@ add_executable(multi_func_shared_lib_modify_ecx
 	shared_lib/main.c
 )
 target_link_libraries(multi_func_shared_lib_modify_ecx test_shared_cycle)
+
+add_executable(single_func_modify_bss
+	single_func_modify_bss.c
+)
