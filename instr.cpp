@@ -673,7 +673,7 @@ int main(int argc, char **argv)
 	printf("Profiling ELF: %s\n", argv[argc - 1]);
 
 	if (!use_file) {
-		fprintf(stderr, "Please, provide file with -f <file>");
+		fprintf(stderr, "Please, provide file with -f <file>\n");
 
 		return 0;
 	}
